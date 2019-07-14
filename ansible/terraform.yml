@@ -1,0 +1,29 @@
+---
+- name: Runs terraform to create and provision machines
+  hosts: 127.0.0.1
+  connection: local
+  tasks:
+  - name: Delete terraform.tfvars
+    file:
+      path: "{{playbook_dir}}/../terraform/terraform.tfvars"
+      state: absent
+  
+  - name: generate terraform.tfvars
+    command: gomplate -d config=../config.yml -d secrets=../secrets.ejson -f ../terraform/terraform.tfvars.tpl
+    register: terraformTfvars
+    
+  - name: write terraform.tfvars
+    copy:
+      content: "{{terraformTfvars.stdout}}"
+      dest: "{{playbook_dir}}/../terraform/terraform.tfvars"
+    
+  - name: Run Terraform
+    terraform:
+      project_path: '../terraform'
+      state: present
+    
+  # - name: Delete terraform.tfvars
+  #   file:
+  #     path: "{{playbook_dir}}/../terraform/terraform.tfvars"
+  #     state: absent
+  
