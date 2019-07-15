@@ -21,6 +21,10 @@
     terraform:
       project_path: '../terraform'
       state: present
+    register: tf_run
+
+  - debug: var=tf_run
+  - debug: var=tf_run.stdout 
     
   # - name: Delete terraform.tfvars
   #   file:

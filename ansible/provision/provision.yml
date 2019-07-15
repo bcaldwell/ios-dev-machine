@@ -3,9 +3,130 @@
   become: yes
   become_user: root
 
-  # vars:
-  #   helloworld: Meow!
+  vars:
+    package_to_install:
+      - zsh
+      - mosh
+      - ufw
+      - fail2ban
+      - unattended-upgrades
 
   tasks:
-  - debug:
-      msg: System {{ inventory_hostname }} has uuid {{ ansible_product_uuid }}
+  - name:  Reading config file
+    slurp:
+      src: /opt/ios-dev-machine/config.json
+    register: config_file
+
+  - name: Parsing config file
+    set_fact:
+      config: "{{ config_file.content | b64decode | trim | from_json  }}"
+
+  - debug: 
+      msg: "{{config}}"
+      
+  - name: "Change hostname to {{config.name}}"
+    hostname:
+      name: "{{config.name}}"
+  
+  - name: Adding hostname to /etc/hosts
+    lineinfile:
+      dest: /etc/hosts
+      regexp: '^127\.0\.0\.1[ \t]+localhost'
+      line: '127.0.0.1 localhost {{config.name}}'
+      state: present
+  
+  - name: Make sure we have a 'wheel' group
+    group:
+      name: wheel
+      state: present
+
+  - name: "Create {{config.user}} user"
+    user:
+      name: "{{config.user}}"
+      groups: wheel
+      createhome: yes
+      state: present
+    register: user_creation
+  
+  - name: "set {{config.user}} password"
+    user:
+      name: "{{config.user}}"
+      password: "{{ '' | password_hash('sha512') }}"
+    when: user_creation.changed
+    
+  - name: "Force {{config.user}} to change password"
+    shell: "chage -d 0 {{config.user}}"
+    when: user_creation.changed
+      # doing this here make the login fail with ssh 
+      # shell: /bin/zsh
+      # password: 
+
+  
+  - name: "Allow {{config.user}} to have sudo"
+    lineinfile:
+      dest: /etc/sudoers
+      state: present
+      regexp: "^{{config.user}} ALL"
+      line: '{{config.user}} ALL=(ALL) ALL'
+      validate: 'visudo -cf %s'
+
+  - name: "Create ansible user"
+    user:
+      name: "ansible"
+      groups: wheel
+      createhome: yes
+      state: present
+
+  - name: "Allow ansible to have passwordless sudo"
+    lineinfile:
+      dest: /etc/sudoers
+      state: present
+      regexp: "^ansible ALL"
+      line: 'ansible ALL=(ALL) NOPASSWD: ALL'
+      validate: 'visudo -cf %s'
+
+  
+  - name: Add authorized keys from github
+    authorized_key:
+      user: "{{config.user}}"
+      key: "https://github.com/{{ item }}.keys"
+    with_items:
+      - bcaldwell
+      - benjamincaldwell
+  
+  - name: Add authorized keys from github for ansible
+    authorized_key:
+      user: "ansible"
+      key: "https://github.com/{{ item }}.keys"
+    with_items:
+      - bcaldwell
+      - benjamincaldwell
+  
+  - name: Disallow password authentication
+    lineinfile: 
+      dest: /etc/ssh/sshd_config
+      regexp: "^PasswordAuthentication"
+      line: "PasswordAuthentication no"
+      state: present
+
+  - name: Disallow root SSH access
+    lineinfile: 
+      dest: /etc/ssh/sshd_config
+      regexp: "^PermitRootLogin"
+      line: "PermitRootLogin no"
+      state: present
+    
+  - name: restart ssh
+    service:
+      name: sshd
+      state: restarted
+
+  - name: Update APT package cache
+    apt: update_cache=yes cache_valid_time=3600
+
+  - name: Install required packages
+    apt: 
+      state: installed 
+      pkg: "{{ package_to_install }}"
+  
+  
